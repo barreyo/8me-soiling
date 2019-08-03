@@ -20,7 +20,7 @@ class ResultWriter():
     def __generate_worksheets(self):
         # Replace the first default sheet
         for idx, name in enumerate(self.worksheet_names):
-            ws = self.__workbook.create_sheet(name, idx)
+            self.__workbook.create_sheet(name, idx)
 
     def write_df_to_sheet(self, df: pd.DataFrame, sheet_name: str):
         for r in dataframe_to_rows(df, index=True, header=True):
