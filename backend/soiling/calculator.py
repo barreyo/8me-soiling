@@ -73,17 +73,16 @@ def calculate_soiling_with_precipitation(
             new_col[idx] = manual_wash_floor
             continue
 
-        if row['ppt'] > precipitation_threshold and \
-                new_col[idx - 1] > precipitation_wash_floor:
-            new_col[idx - 1] = precipitation_wash_floor
+        new_col[idx] = new_col[idx - 1] + soiling_accumulation_rate
+
+        if new_df.iloc[idx]['ppt'] > precipitation_threshold and \
+                new_col[idx] > precipitation_wash_floor:
+            new_col[idx] = precipitation_wash_floor
 
             wash_type = __get_wash_type(
-                new_df.iloc[idx + 1]['washing_type'], 'p')
+                new_df.iloc[idx]['washing_type'], 'p')
 
-            new_df.at[idx - 1, 'washing_type'] = wash_type
-            continue
-
-        new_col[idx] = new_col[idx - 1] + soiling_accumulation_rate
+            new_df.at[idx, 'washing_type'] = wash_type
 
     new_df['soiling_after_natural_washing'] = new_col
     return new_df
@@ -264,7 +263,10 @@ def generate_workbook(args):
         title = ds[0].strip()
         imp_res.loc[0, title] = ds[-1]
 
-    res_writer.write_df_to_sheet(imp_res, 'results', 'Dataset metadata')
+    mdf = pd.DataFrame.from_dict(vars(args))
+
+    res_writer.write_df_to_sheet(mdf, 'results', 'Simulation Parameters')
+    res_writer.write_df_to_sheet(imp_res, 'results', 'Dataset Metadata')
 
     return res_writer
 
@@ -311,9 +313,14 @@ def __main():
                         type=float,
                         required=True,
                         help='Average number of manual washes per year.')
+    parser.add_argument('--output',
+                        '-o',
+                        dest='output_dir',
+                        default='/tmp/',
+                        help='Directory to write the final Excel file.')
     args = parser.parse_args()
     wb = generate_workbook(args)
-    written_file = wb.save_workbook()
+    written_file = wb.save_workbook(args.output_dir)
     print(written_file)
 
 
