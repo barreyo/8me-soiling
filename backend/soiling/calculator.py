@@ -1,10 +1,14 @@
 
 import argparse
+import base64
+import io
+from datetime import timedelta
+from multiprocessing import Pool
+
+import numpy as np
+import pandas as pd
 
 from soiling.result_writer import ResultWriter
-
-import pandas as pd
-import numpy as np
 
 N_TO_MONTH = {
     1: 'January',
@@ -22,15 +26,26 @@ N_TO_MONTH = {
 }
 
 
-def read_precipitation_data(data_path: str) -> pd.DataFrame:
+def read_precipitation_data(data_path) -> pd.DataFrame:
     """Read PRISM perticipation csv file into a dataframe."""
-    df = pd.read_csv(data_path, skiprows=10)
+    meta_d = None
+    if isinstance(data_path, str):
+        with open(data_path) as f:
+            meta_d = [next(f) for x in range(10)]
+
+        df = pd.read_csv(data_path, skiprows=10)
+    else:
+        with data_path as f:
+            meta_d = [next(f, b'').decode() for x in range(10)]
+
+            df = pd.read_csv(f)
+
     df = df.rename(columns={
         'Date': 'date',
         'ppt (mm)': 'ppt'
     })
     df['date'] = pd.to_datetime(df['date'])
-    return df
+    return df, meta_d
 
 
 def add_washing_column(df: pd.DataFrame) -> pd.DataFrame:
@@ -118,10 +133,13 @@ def greedy_manual_wash_threshold_search(
     new_df = df.copy()
     washes_placed = 0
     vals = []
+    n_years = round((new_df.tail(1).iloc[0]['date'] -
+                     new_df.head(1).iloc[0]['date']) / timedelta(days=365)) - 1
+    total_washes = round(n_cleans * n_years)
 
-    while washes_placed < n_cleans:
-        print(f'Washes placed {washes_placed}')
+    print(f'--- Running simulation for {n_cleans} washes per year ---')
 
+    while washes_placed < total_washes:
         dataset_avg = new_df['soiling_after_natural_washing'].mean(
             axis=0) + 0.1
         peak_index = new_df['soiling_after_natural_washing'].idxmax()
@@ -130,8 +148,7 @@ def greedy_manual_wash_threshold_search(
         start_index = int(peak_index - int(
             (peak - dataset_avg) / float(soiling_accumulation_rate)))
 
-        vals.append(
-            new_df.iloc[start_index - 1]['soiling_after_natural_washing'])
+        vals.append(peak)
 
         new_df.loc[(start_index - 1):(start_index + manual_wash_grace_period),
                    'soiling_after_natural_washing'] = manual_wash_floor
@@ -149,58 +166,112 @@ def greedy_manual_wash_threshold_search(
         washes_placed += 1
 
     actually_placed = len(new_df[new_df['washing_type'].str.contains('m')])
-    print(f'Requested washes: {n_cleans}')
-    print(f'Washes: {actually_placed}')
+
+    print(f'--- Results {n_cleans} washes ---')
+    print(f'Requested washes per year: {n_cleans}')
+    print(f'Number of years: {n_years}')
+    print(f'Total requested washes {round(n_cleans * n_years)}')
+    print(f'Washes added: {actually_placed}')
     print(f'Guessed threshold: {min(vals)}')
+    print('--- Done ---\n')
 
-    return new_df, min(vals)
+    return new_df, min(vals), actually_placed
 
 
-def generate_xlsx_file(args):
+def generate_workbook(args):
+    sheets = ['results', 'data', 'averages_natural_only',
+              'averages_with_manual',
+              'soiling_natural_only']
+
+    if isinstance(args, dict):
+        soiling_acc_rate = float(args['avg_washes_per_year'])
+        manual_wash_floor = float(args['manual_wash_floor'])
+        manual_wash_grace_period = float(args['manual_wash_grace_period'])
+        soiling_acc_rate = float(args['soiling_acc_rate'])
+        precipitation_threshold = float(args['precipitation_threshold'])
+        precipitation_wash_floor = float(args['precipitation_wash_floor'])
+        avg_washes_per_year = float(args['avg_washes_per_year'])
+        data = io.BytesIO(base64.b64decode(args['precipitation_data']))
+        file_path = data
+        sheets.append('soiling_with_manual')
+    else:
+        soiling_acc_rate = args.avg_washes_per_year
+        manual_wash_floor = args.manual_wash_floor
+        manual_wash_grace_period = args.manual_wash_grace_period
+        soiling_acc_rate = args.soiling_acc_rate
+        precipitation_threshold = args.precipitation_threshold
+        precipitation_wash_floor = args.precipitation_wash_floor
+        avg_washes_per_year = args.avg_washes_per_year
+        for w in avg_washes_per_year:
+            sheets.append('soiling_with_manual_' + str(w))
+        file_path = args.file_path
+
     res_writer = ResultWriter(
         '8me-soiling',
-        ['averages_natural_only', 'averages_with_manual',
-         'soiling_natural_only', 'soiling_with_manual', 'data']
+        sheets
     )
 
-    original_data = read_precipitation_data('data/prism_1.csv')
+    original_data, meta_data = read_precipitation_data(file_path)
     res_writer.write_df_to_sheet(original_data, 'data')
 
     df = add_washing_column(original_data)
     precip_soiling = calculate_soiling_with_precipitation(
         df,
-        args.soiling_acc_rate,
-        args.precipitation_threshold,
-        args.precipitation_wash_floor,
-        args.manual_wash_floor)
+        soiling_acc_rate,
+        precipitation_threshold,
+        precipitation_wash_floor,
+        manual_wash_floor)
 
     precip_averages = calculate_montly_averages(
         precip_soiling, 'soiling_after_natural_washing')
     res_writer.write_df_to_sheet(precip_averages, 'averages_natural_only')
     res_writer.write_df_to_sheet(precip_soiling, 'soiling_natural_only')
 
-    manual_soiling, searched_threshold = greedy_manual_wash_threshold_search(
-        precip_soiling,
-        args.avg_washes_per_year,
-        args.manual_wash_floor,
-        args.manual_wash_grace_period,
-        args.soiling_acc_rate,
-        args.precipitation_threshold,
-        args.precipitation_wash_floor)
+    with Pool(len(avg_washes_per_year)) as p:
+        tasks = [(precip_soiling,
+                  avg_wash,
+                  manual_wash_floor,
+                  manual_wash_grace_period,
+                  soiling_acc_rate,
+                  precipitation_threshold,
+                  precipitation_wash_floor)
+                 for avg_wash in avg_washes_per_year]
+        results = p.starmap(greedy_manual_wash_threshold_search, tasks)
 
-    res_writer.write_df_to_sheet(manual_soiling, 'soiling_with_manual')
+    for w, (manual_soiling, searched_threshold, placed) in \
+            zip(avg_washes_per_year, results):
+        res_writer.write_df_to_sheet(
+            manual_soiling, 'soiling_with_manual_' + str(w))
 
-    monthly_averages = calculate_montly_averages(
-        manual_soiling, 'soiling_after_natural_washing')
-    res_writer.write_df_to_sheet(monthly_averages, 'averages_with_manual')
+        monthly_averages = calculate_montly_averages(
+            manual_soiling, 'soiling_after_natural_washing')
+        res_writer.write_df_to_sheet(
+            monthly_averages, 'averages_with_manual',
+            f'Averages {w} cleans per year')
 
-    written_file = res_writer.save_workbook('/tmp/')
+    # Write important results
+    for w, (_, searched_threshold, placed) in zip(avg_washes_per_year,
+                                                  results):
+        imp_res = pd.DataFrame()
+        imp_res.loc[w, 'Wash Treshold'] = searched_threshold
+        imp_res.loc[w, 'Washes'] = placed
+        res_writer.write_df_to_sheet(
+            imp_res, 'results', f'Washes per year {w}')
 
-    print('File written to ' + written_file)
+    imp_res = pd.DataFrame()
+    for d in meta_data[1:-5]:
+        ds = d.split(':')
+        title = ds[0].strip()
+        imp_res.loc[0, title] = ds[-1]
+
+    res_writer.write_df_to_sheet(imp_res, 'results', 'Dataset metadata')
+
+    return res_writer
 
 
 def __main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('file_path')
     parser.add_argument('--soiling-accumulation-rate',
                         '-s',
                         dest='soiling_acc_rate',
@@ -236,12 +307,14 @@ def __main():
     parser.add_argument('--avg-washes-per-year',
                         '-y',
                         dest='avg_washes_per_year',
-                        default=10,
-                        type=int,
+                        nargs="*",
+                        type=float,
+                        required=True,
                         help='Average number of manual washes per year.')
-
     args = parser.parse_args()
-    generate_xlsx_file(args)
+    wb = generate_workbook(args)
+    written_file = wb.save_workbook()
+    print(written_file)
 
 
 if __name__ == "__main__":

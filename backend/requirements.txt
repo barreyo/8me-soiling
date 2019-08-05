@@ -4,18 +4,60 @@
 #
 #    pip-compile --output-file=requirements.txt requirements.in
 #
+asn1crypto==0.24.0        # via cryptography
+attrs==19.1.0             # via jsonschema
+aws-sam-translator==1.13.0  # via cfn-lint
+aws-xray-sdk==2.4.2       # via moto
+boto3==1.9.200
+boto==2.49.0              # via moto
+botocore==1.12.200        # via aws-xray-sdk, boto3, moto, s3transfer
 certifi==2019.6.16        # via requests
+cffi==1.12.3              # via cryptography
+cfn-lint==0.23.1          # via moto
 chardet==3.0.4            # via requests
+cryptography==2.7         # via moto, sshpubkeys
+datetime==4.3             # via moto
+docker==4.0.2             # via moto
+docutils==0.14            # via botocore
+ecdsa==0.13.2             # via python-jose, sshpubkeys
 et-xmlfile==1.0.1         # via openpyxl
 falcon==2.0.0             # via hug
+future==0.17.1            # via aws-xray-sdk, python-jose
 hug==2.5.6
-idna==2.8                 # via requests
+idna==2.8                 # via moto, requests
 jdcal==1.4.1              # via openpyxl
+jinja2==2.10.1            # via moto
+jmespath==0.9.4           # via boto3, botocore
+jsondiff==1.1.2           # via moto
+jsonpatch==1.24           # via cfn-lint
+jsonpickle==1.2           # via aws-xray-sdk
+jsonpointer==2.0          # via jsonpatch
+jsonschema==3.0.2         # via aws-sam-translator, cfn-lint
+markupsafe==1.1.1         # via jinja2
+mock==3.0.5               # via moto
+moto==1.3.13
 numpy==1.17.0
 openpyxl==2.6.2
 pandas==0.25.0
-python-dateutil==2.8.0    # via pandas
-pytz==2019.2              # via pandas
-requests==2.22.0          # via hug
-six==1.12.0               # via python-dateutil
-urllib3==1.25.3           # via requests
+pyasn1==0.4.6             # via rsa
+pycparser==2.19           # via cffi
+pyrsistent==0.15.4        # via jsonschema
+python-dateutil==2.8.0    # via botocore, moto, pandas
+python-jose==3.0.1        # via moto
+pytz==2019.2              # via datetime, moto, pandas
+pyyaml==5.1.2             # via cfn-lint, moto
+requests==2.22.0          # via cfn-lint, docker, hug, moto, responses
+responses==0.10.6         # via moto
+rsa==4.0                  # via python-jose
+s3transfer==0.2.1         # via boto3
+six==1.12.0               # via aws-sam-translator, cfn-lint, cryptography, docker, jsonschema, mock, moto, pyrsistent, python-dateutil, python-jose, responses, websocket-client
+sshpubkeys==3.1.0         # via moto
+urllib3==1.25.3           # via botocore, requests
+websocket-client==0.56.0  # via docker
+werkzeug==0.15.5          # via moto
+wrapt==1.11.2             # via aws-xray-sdk
+xmltodict==0.12.0         # via moto
+zope.interface==4.6.0     # via datetime
+
+# The following packages are considered to be unsafe in a requirements file:
+# setuptools==41.0.1        # via cfn-lint, jsonschema, zope.interface
