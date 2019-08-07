@@ -1,6 +1,7 @@
 
 import argparse
 import base64
+import time
 import io
 from datetime import timedelta
 from multiprocessing import Pool
@@ -119,9 +120,49 @@ def __get_wash_type(current, new: str) -> str:
     return new
 
 
+def place_washes(
+        df: pd.DataFrame,
+        floor: float,
+        threshold: float,
+        grace_period: float,
+        tolerance: float,
+        acc_rate: float,
+        precip_threshold: float,
+        precip_floor: float) -> pd.DataFrame:
+
+    new_df = df.copy()
+    col = 'soiling_after_natural_washing'
+    washes_placed = 0
+    idx = 0
+
+    while idx < df.shape[0]:
+
+        if new_df.iloc[idx][col] < (threshold - tolerance):
+            idx += 1
+            continue
+
+        new_df.loc[idx, col] = floor
+
+        wash_type = __get_wash_type(
+            new_df.iloc[idx]['washing_type'], 'm')
+        new_df.at[idx, 'washing_type'] = wash_type
+
+        new_df.loc[(idx + 1):(idx + int(grace_period)), col] = floor
+        new_df.loc[(idx + 1):(idx + int(grace_period)), 'washing_type'] = 'g'
+
+        washes_placed += 1
+
+        new_df = calculate_soiling_with_precipitation(
+            new_df, acc_rate, precip_threshold,
+            precip_floor, floor)
+        idx = 0
+
+    return new_df, washes_placed
+
+
 def greedy_manual_wash_threshold_search(
         df: pd.DataFrame,
-        n_cleans: int,
+        n_cleans: float,
         manual_wash_floor: float,
         manual_wash_grace_period: float,
         soiling_accumulation_rate: float,
@@ -135,46 +176,49 @@ def greedy_manual_wash_threshold_search(
     n_years = round((new_df.tail(1).iloc[0]['date'] -
                      new_df.head(1).iloc[0]['date']) / timedelta(days=365)) - 1
     total_washes = round(n_cleans * n_years)
+    temp_df = new_df
 
     print(f'--- Running simulation for {n_cleans} washes per year ---')
-
+    start = time.time()
+    idx = 0
     while washes_placed < total_washes:
-        dataset_avg = new_df['soiling_after_natural_washing'].mean(
-            axis=0) + 0.1
-        peak_index = new_df['soiling_after_natural_washing'].idxmax()
-        peak = new_df.loc[peak_index, 'soiling_after_natural_washing']
+        nlargest = temp_df.nlargest(
+            total_washes - washes_placed, 'soiling_after_natural_washing')
+        # min_nlargest = nlargest.index[-1]
+        v_min_nlargest = nlargest.tail(
+            1).iloc[0]['soiling_after_natural_washing']
 
-        start_index = int(peak_index - int(
-            (peak - dataset_avg) / float(soiling_accumulation_rate)))
+        vals.append(v_min_nlargest)
 
-        vals.append(peak)
+        temp_df, placed = place_washes(
+            df, manual_wash_floor, v_min_nlargest,
+            manual_wash_grace_period, 0.1,
+            soiling_accumulation_rate, precipitation_threshold,
+            precipitation_wash_floor)
+        washes_placed = placed
 
-        new_df.loc[(start_index - 1):(start_index + manual_wash_grace_period),
-                   'soiling_after_natural_washing'] = manual_wash_floor
+        print(
+            f'[{n_cleans}] Round {idx + 1} placed '
+            f'{washes_placed}/{total_washes} washes')
+        idx += 1
 
-        new_df.loc[(start_index - 1), 'washing_type'] = __get_wash_type(
-            new_df.iloc[start_index - 1]['washing_type'], 'm')
+    actually_placed = len(temp_df[temp_df['washing_type'].str.contains('m')])
+    end = time.time()
 
-        new_df.loc[(start_index):(
-            start_index + manual_wash_grace_period + 1), 'washing_type'] = 'g'
+    # Protect against 0 or negative input
+    if n_cleans <= 0:
+        vals = [-1.0]
 
-        new_df = calculate_soiling_with_precipitation(
-            new_df, soiling_accumulation_rate, precipitation_threshold,
-            precipitation_wash_floor, manual_wash_floor)
-
-        washes_placed += 1
-
-    actually_placed = len(new_df[new_df['washing_type'].str.contains('m')])
-
-    print(f'--- Results {n_cleans} washes ---')
+    print(f'\n--- Results {n_cleans} washes ---')
     print(f'Requested washes per year: {n_cleans}')
     print(f'Number of years: {n_years}')
-    print(f'Total requested washes {round(n_cleans * n_years)}')
+    print(f'Total requested washes: {total_washes}')
     print(f'Washes added: {actually_placed}')
     print(f'Guessed threshold: {min(vals)}')
+    print(f'Simulation time: {end - start}s')
     print('--- Done ---\n')
 
-    return new_df, min(vals), actually_placed
+    return temp_df, min(vals), actually_placed
 
 
 def generate_workbook(args):
@@ -200,7 +244,8 @@ def generate_workbook(args):
         soiling_acc_rate = args.soiling_acc_rate
         precipitation_threshold = args.precipitation_threshold
         precipitation_wash_floor = args.precipitation_wash_floor
-        avg_washes_per_year = args.avg_washes_per_year
+        avg_washes_per_year = list(
+            filter(lambda x: x > 0, args.avg_washes_per_year))
         for w in avg_washes_per_year:
             sheets.append('soiling_with_manual_' + str(w))
         file_path = args.file_path
