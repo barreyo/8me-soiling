@@ -361,7 +361,7 @@ def __main():
     parser.add_argument('--output',
                         '-o',
                         dest='output_dir',
-                        default='/tmp/',
+                        default='./',
                         help='Directory to write the final Excel file.')
     args = parser.parse_args()
     wb = generate_workbook(args)
