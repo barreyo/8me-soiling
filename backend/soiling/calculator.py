@@ -160,6 +160,15 @@ def place_washes(
     return new_df, washes_placed
 
 
+def find_year_maxes(df: pd.DataFrame):
+    df = df.copy()
+    df['date'] = df['date'].apply(lambda x: x.year)
+    return df.loc[
+        df.groupby('date')[
+            'soiling_after_natural_washing'].idxmax()].sort_values(
+                'soiling_after_natural_washing')
+
+
 def greedy_manual_wash_threshold_search(
         df: pd.DataFrame,
         n_cleans: float,
@@ -181,24 +190,40 @@ def greedy_manual_wash_threshold_search(
     print(f'--- Running simulation for {n_cleans} washes per year ---')
     start = time.time()
     idx = 0
-    while washes_placed < total_washes:
-        nlargest = temp_df.nlargest(
-            total_washes - washes_placed, 'soiling_after_natural_washing')
-        # min_nlargest = nlargest.index[-1]
-        v_min_nlargest = nlargest.tail(
-            1).iloc[0]['soiling_after_natural_washing']
+    v_min_nlargest = 0.0
+
+    while washes_placed != total_washes:
+        # Split dataset into 'total_washes' number of segments and take max
+        # of each segment to speed up threshold search
+        if idx == 0:
+            year_maxes = find_year_maxes(temp_df)
+            midx = max([int(n_years - total_washes), 0])
+            v_min_nlargest = year_maxes.iloc[midx][
+                'soiling_after_natural_washing']
+        elif washes_placed > total_washes:
+            v_min_nlargest += soiling_accumulation_rate * \
+                (washes_placed - total_washes)
+        else:
+            nlargest = temp_df.nlargest(
+                total_washes - washes_placed, 'soiling_after_natural_washing')
+            v_min_nlargest = nlargest.tail(
+                1).iloc[0]['soiling_after_natural_washing'] - \
+                soiling_accumulation_rate * \
+                (total_washes - washes_placed)
+
+        print(f'[{n_cleans}] Round {idx + 1} threshold {v_min_nlargest}')
 
         vals.append(v_min_nlargest)
 
         temp_df, placed = place_washes(
             df, manual_wash_floor, v_min_nlargest,
-            manual_wash_grace_period, 0.1,
+            manual_wash_grace_period, 0.01,
             soiling_accumulation_rate, precipitation_threshold,
             precipitation_wash_floor)
         washes_placed = placed
 
         print(
-            f'[{n_cleans}] Round {idx + 1} placed '
+            f'[{n_cleans}] Round {idx + 1} triggered '
             f'{washes_placed}/{total_washes} washes')
         idx += 1
 
@@ -213,10 +238,10 @@ def greedy_manual_wash_threshold_search(
     print(f'Requested washes per year: {n_cleans}')
     print(f'Number of years: {n_years}')
     print(f'Total requested washes: {total_washes}')
-    print(f'Washes added: {actually_placed}')
-    print(f'Guessed threshold: {min(vals)}')
+    print(f'Washes triggered: {actually_placed}')
+    print(f'Threshold: {min(vals)}')
     print(f'Simulation time: {end - start}s')
-    print('--- Done ---\n')
+    print(f'---\n')
 
     return temp_df, min(vals), actually_placed
 
@@ -281,6 +306,9 @@ def generate_workbook(args):
                   precipitation_wash_floor)
                  for avg_wash in avg_washes_per_year]
         results = p.starmap(greedy_manual_wash_threshold_search, tasks)
+
+    print('--- Done ---\n')
+    print('Generating Excel file...')
 
     for w, (manual_soiling, searched_threshold, placed) in \
             zip(avg_washes_per_year, results):
