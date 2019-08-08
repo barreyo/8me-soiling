@@ -150,7 +150,7 @@ def place_washes(
 
             new_df.at[idx, 'washing_type'] = wash_type
 
-        elif new_df.iloc[idx][col] > (threshold - tolerance):
+        elif new_df.iloc[idx][col] > threshold:
             new_df.loc[idx, col] = floor
 
             wash_type = __get_wash_type(
@@ -200,11 +200,12 @@ def greedy_manual_wash_threshold_search(
     idx = 0
     v_min_nlargest = 0.0
     step = 0.1
+    last_threshold_above, last_threshold_below = 0.0, 0.0
 
     while washes_placed != total_washes:
         # Split dataset into 'total_washes' number of segments and take max
         # of each segment to speed up threshold search
-        if idx >= 10 and abs(washes_placed - total_washes) == 1:
+        if idx >= 20 and abs(washes_placed - total_washes) == 1:
             print(f'Exiting early, could not find a stable threshold...')
             break
 
@@ -218,11 +219,9 @@ def greedy_manual_wash_threshold_search(
             v_min_nlargest = year_maxes.iloc[midx][
                 'soiling_after_natural_washing']
         elif washes_placed > total_washes:
-            v_min_nlargest += (washes_placed - total_washes) * step * 0.1
+            v_min_nlargest += step
         else:
-            v_min_nlargest -= (total_washes - washes_placed) * step * 0.1
-
-        step = max([0.5 - (idx * 0.05), 0.01])
+            v_min_nlargest -= step
 
         print(f'[{n_cleans}] Round {idx + 1} threshold {v_min_nlargest}')
 
@@ -234,6 +233,17 @@ def greedy_manual_wash_threshold_search(
             soiling_accumulation_rate, precipitation_threshold,
             precipitation_wash_floor)
         washes_placed = placed
+
+        if washes_placed > total_washes:
+            last_threshold_above = v_min_nlargest
+        else:
+            last_threshold_below = v_min_nlargest
+
+        if last_threshold_above != 0.0 and last_threshold_below != 0.0:
+            step = abs(((last_threshold_above -
+                         last_threshold_below) / 2.0) * (1.0 - idx * 0.01))
+        else:
+            step = max([1.0 - idx * 0.01, 0.01])
 
         print(
             f'[{n_cleans}] Round {idx + 1} triggered '
@@ -375,7 +385,7 @@ def __main():
     parser.add_argument('--precipitation-wash-floor',
                         '-w',
                         dest='precipitation_wash_floor',
-                        default=1.0,
+                        default=0.5,
                         type=float,
                         help='Soil accumulation after natural(precipitation) '
                         'washing')
