@@ -131,31 +131,39 @@ def place_washes(
         precip_floor: float) -> pd.DataFrame:
 
     new_df = df.copy()
+    new_df['soiling_after_natural_washing'] = 0.0
     col = 'soiling_after_natural_washing'
     washes_placed = 0
-    idx = 0
+    idx = 1
 
     while idx < df.shape[0]:
 
-        if new_df.iloc[idx][col] < (threshold - tolerance):
-            idx += 1
-            continue
+        if new_df.iloc[idx]['washing_type'] not in ['m', 'g']:
+            new_df.loc[idx, col] = new_df.iloc[idx - 1][col] + acc_rate
 
-        new_df.loc[idx, col] = floor
+        if new_df.iloc[idx]['ppt'] > precip_threshold and \
+                new_df.iloc[idx][col] > precip_floor:
+            new_df.loc[idx, col] = precip_floor
 
-        wash_type = __get_wash_type(
-            new_df.iloc[idx]['washing_type'], 'm')
-        new_df.at[idx, 'washing_type'] = wash_type
+            wash_type = __get_wash_type(
+                new_df.iloc[idx]['washing_type'], 'p')
 
-        new_df.loc[(idx + 1):(idx + int(grace_period)), col] = floor
-        new_df.loc[(idx + 1):(idx + int(grace_period)), 'washing_type'] = 'g'
+            new_df.at[idx, 'washing_type'] = wash_type
 
-        washes_placed += 1
+        elif new_df.iloc[idx][col] > (threshold - tolerance):
+            new_df.loc[idx, col] = floor
 
-        new_df = calculate_soiling_with_precipitation(
-            new_df, acc_rate, precip_threshold,
-            precip_floor, floor)
-        idx = 0
+            wash_type = __get_wash_type(
+                new_df.iloc[idx]['washing_type'], 'm')
+            new_df.at[idx, 'washing_type'] = wash_type
+
+            new_df.loc[(idx + 1):(idx + int(grace_period)), col] = floor
+            new_df.loc[(idx + 1):(idx + int(grace_period)),
+                       'washing_type'] = 'g'
+
+            washes_placed += 1
+
+        idx += 1
 
     return new_df, washes_placed
 
@@ -191,25 +199,30 @@ def greedy_manual_wash_threshold_search(
     start = time.time()
     idx = 0
     v_min_nlargest = 0.0
+    step = 0.1
 
     while washes_placed != total_washes:
         # Split dataset into 'total_washes' number of segments and take max
         # of each segment to speed up threshold search
+        if idx >= 10 and abs(washes_placed - total_washes) == 1:
+            print(f'Exiting early, could not find a stable threshold...')
+            break
+
+        if idx >= 30 and abs(washes_placed - total_washes) == 2:
+            print(f'Exiting early, could not find a stable threshold...')
+            break
+
         if idx == 0:
             year_maxes = find_year_maxes(temp_df)
-            midx = max([int(n_years - total_washes), 0])
+            midx = max([int(n_years - total_washes * 0.7), 0])
             v_min_nlargest = year_maxes.iloc[midx][
                 'soiling_after_natural_washing']
         elif washes_placed > total_washes:
-            v_min_nlargest += soiling_accumulation_rate * \
-                (washes_placed - total_washes)
+            v_min_nlargest += (washes_placed - total_washes) * step * 0.1
         else:
-            nlargest = temp_df.nlargest(
-                total_washes - washes_placed, 'soiling_after_natural_washing')
-            v_min_nlargest = nlargest.tail(
-                1).iloc[0]['soiling_after_natural_washing'] - \
-                soiling_accumulation_rate * \
-                (total_washes - washes_placed)
+            v_min_nlargest -= (total_washes - washes_placed) * step * 0.1
+
+        step = max([0.5 - (idx * 0.05), 0.01])
 
         print(f'[{n_cleans}] Round {idx + 1} threshold {v_min_nlargest}')
 
@@ -217,7 +230,7 @@ def greedy_manual_wash_threshold_search(
 
         temp_df, placed = place_washes(
             df, manual_wash_floor, v_min_nlargest,
-            manual_wash_grace_period, 0.01,
+            manual_wash_grace_period, 0.002,
             soiling_accumulation_rate, precipitation_threshold,
             precipitation_wash_floor)
         washes_placed = placed
@@ -270,7 +283,7 @@ def generate_workbook(args):
         precipitation_threshold = args.precipitation_threshold
         precipitation_wash_floor = args.precipitation_wash_floor
         avg_washes_per_year = list(
-            filter(lambda x: x > 0, args.avg_washes_per_year))
+            filter(lambda x: x >= 0, args.avg_washes_per_year))
         for w in avg_washes_per_year:
             sheets.append('soiling_with_manual_' + str(w))
         file_path = args.file_path
@@ -375,7 +388,7 @@ def __main():
     parser.add_argument('--manual-wash-grace-period',
                         '-g',
                         dest='manual_wash_grace_period',
-                        default=10,
+                        default=20,
                         type=int,
                         help='Days of grace period of soiling accumulation '
                         'after manual washing')
@@ -385,6 +398,7 @@ def __main():
                         nargs="*",
                         type=float,
                         required=True,
+                        default=[0, 1, 2, 3],
                         help='Average number of manual washes per year.')
     parser.add_argument('--output',
                         '-o',
