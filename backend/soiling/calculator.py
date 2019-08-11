@@ -1,8 +1,9 @@
 
 import argparse
 import base64
-import time
 import io
+import sys
+import time
 from datetime import timedelta
 from multiprocessing import Pool
 
@@ -40,6 +41,11 @@ def read_precipitation_data(data_path) -> pd.DataFrame:
             meta_d = [next(f, b'').decode() for x in range(10)]
 
             df = pd.read_csv(f)
+
+    if '(mm)' not in df.columns[-1]:
+        print('ERROR: The source data does not use \'mm\' as percipitation '
+              'measurement unit')
+        sys.exit(1)
 
     df = df.rename(columns={
         'Date': 'date',
@@ -358,7 +364,7 @@ def generate_workbook(args):
             imp_res, 'results', f'Washes per year {w}')
 
     imp_res = pd.DataFrame()
-    for d in meta_data[1:-5]:
+    for d in meta_data:
         ds = d.split(':')
         title = ds[0].strip()
         imp_res.loc[0, title] = ds[-1]
