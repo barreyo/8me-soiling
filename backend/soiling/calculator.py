@@ -199,7 +199,7 @@ def greedy_manual_wash_threshold_search(
     start = time.time()
     idx = 0
     v_min_nlargest = 0.0
-    step = 0.1
+    step = soiling_accumulation_rate
     last_threshold_above, last_threshold_below = 0.0, 0.0
 
     while washes_placed != total_washes:
@@ -242,6 +242,10 @@ def greedy_manual_wash_threshold_search(
         if last_threshold_above != 0.0 and last_threshold_below != 0.0:
             step = abs(((last_threshold_above -
                          last_threshold_below) / 2.0) * (1.0 - idx * 0.01))
+            if abs(last_threshold_above - last_threshold_below) <= \
+                    (soiling_accumulation_rate + 0.001):
+                print(f'Exiting early, unable to shrink threshold...')
+                break
         else:
             step = max([1.0 - idx * 0.01, 0.01])
 
