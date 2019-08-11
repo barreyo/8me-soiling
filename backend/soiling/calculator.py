@@ -249,7 +249,7 @@ def greedy_manual_wash_threshold_search(
             step = abs(((last_threshold_above -
                          last_threshold_below) / 2.0) * (1.0 - idx * 0.01))
             if abs(last_threshold_above - last_threshold_below) <= \
-                    (soiling_accumulation_rate + 0.001):
+                    (soiling_accumulation_rate + 0.001) and idx >= 10:
                 print(f'Exiting early, unable to shrink threshold...')
                 break
         else:
@@ -367,7 +367,7 @@ def generate_workbook(args):
     for d in meta_data:
         ds = d.split(':')
         title = ds[0].strip()
-        imp_res.loc[0, title] = ds[-1]
+        imp_res.loc[0, title] = ', '.join(ds[1:])
 
     mdf = pd.DataFrame.from_dict(vars(args))
 
